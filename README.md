@@ -5,7 +5,7 @@ OneGuide builds one XMLTV guide file for an HDHomeRun tuner. It combines two sou
 - **Gracenote** (tvlistings.gracenote.com): 5 or more days of listings with descriptions, cast, crew,
   genres and images, but it can miss low-power stations and ATSC 3.0 channels.
 - **Your HDHomeRun tuner's own guide** from SiliconDust: every channel the tuner receives, but only
-  about 2 days, and no subscription is needed.
+  about 2-3 days, and no subscription is needed.
 
 Each channel gets Gracenote's listings when Gracenote carries it, and the tuner's guide fills in
 the channels Gracenote doesn't. The result is one file that needs no merging. It works with Kodi

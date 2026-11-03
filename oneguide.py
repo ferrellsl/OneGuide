@@ -451,9 +451,10 @@ def overlaps(spans, start, stop):
 # ---------------------------------------------------------------- images
 
 class Images:
-    def __init__(self, net, folder):
+    def __init__(self, net, folder, prefix=None):
         self.net = net
         self.folder = folder
+        self.prefix = prefix
         self.done = {}
         self.fetched = 0
         self.failed = 0
@@ -512,7 +513,11 @@ class Images:
     def get(self, url):
         if not url or not self.folder:
             return url
-        return self.done.get(url, url)
+        path = self.done.get(url, url)
+        if self.prefix and path != url:
+            # How other computers reach the folder, such as a network share.
+            path = self.prefix.rstrip("\\/") + "\\" + os.path.basename(path)
+        return path
 
 
 # ---------------------------------------------------------------- xmltv
@@ -630,6 +635,9 @@ def main():
                     help="add cast, crew, genres and series images (one request per series, cached a week)")
     ap.add_argument("-I", "--image-dir",
                     help="download all program and channel images to this folder and point the guide at them")
+    ap.add_argument("--image-path", metavar="PATH",
+                    help="folder name to write in the guide for -I images, such as a network share "
+                         "other computers can reach (default: the folder's local path)")
     ap.add_argument("-W", "--image-width", type=int, default=720,
                     help="width to ask Gracenote for program images, 0 for the originals (default 720)")
     ap.add_argument("-A", "--mark", default="", help='append " *" to titles: "new", "live" or "new live"')
@@ -681,7 +689,7 @@ def main():
     log(f"Channels: {stats['gracenote']} from Gracenote, {stats['both']} from Gracenote "
         f"plus the tuner, {stats['tuner']} from the tuner only")
 
-    images = Images(net, args.image_dir)
+    images = Images(net, args.image_dir, args.image_path)
     images.fetch_all(channels)
     if args.image_dir:
         log(f"Images: {len(images.done) - images.failed} in {args.image_dir} "

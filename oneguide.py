@@ -623,8 +623,10 @@ def write_xmltv(path, channels, images, mark):
 def main():
     global quiet, image_width
     ap =argparse.ArgumentParser(description="One XMLTV guide from Gracenote and an HDHomeRun tuner.")
-    ap.add_argument("-u", "--user", help="Gracenote (tvlistings.gracenote.com) user name")
-    ap.add_argument("-p", "--password", help="Gracenote password")
+    ap.add_argument("-u", "--user", default=os.environ.get("ONEGUIDE_USER"),
+                    help="Gracenote (tvlistings.gracenote.com) user name, or set ONEGUIDE_USER")
+    ap.add_argument("-p", "--password", default=os.environ.get("ONEGUIDE_PASSWORD"),
+                    help="Gracenote password, or set ONEGUIDE_PASSWORD")
     ap.add_argument("-d", "--days", type=int, default=5, help="days of Gracenote listings (default 5)")
     ap.add_argument("--tuner-days", type=int, default=3,
                     help="days to ask the tuner's guide for; it stops at what SiliconDust has (default 3)")

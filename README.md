@@ -1,6 +1,6 @@
 # OneGuide
 
-OneGuide builds one XMLTV guide file for an HDHomeRun tuner. It combines two sources:
+OneGuide builds one XMLTV EPG guide file from Gracenote and a HDHomeRun tuner. It combines two sources:
 
 - **Gracenote** (tvlistings.gracenote.com): 5 or more days of listings with descriptions, cast, crew,
   genres and images, but it can miss low-power stations and some ATSC 3.0 channels.

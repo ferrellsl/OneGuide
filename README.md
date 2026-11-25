@@ -109,6 +109,12 @@ On Linux, use cron, for example:
 | `--no-gracenote` | Use only the tuner's guide. Needs no Gracenote account. |
 | `--use-tuner LIST` | Channels that always use the tuner's guide, such as `35.3,44.3`. |
 | `--use-gracenote LIST` | Channels that use Gracenote even when its listings disagree with the tuner's. |
+| `--signal` | Tune each station on every run and leave out the ones that don't come in well. See [Leaving out weak stations](#leaving-out-weak-stations). |
+| `--min-quality PCT` | With `--signal`, the signal quality a station needs to count as good. Default 0 (it only has to lock). |
+| `--min-good PCT` | With `--signal`, the share of remembered runs a station must be good in. Default 50. |
+| `--signal-atsc3` | With `--signal`, test ATSC 3.0 stations too. By default they're always kept. |
+| `--keep LIST` | Stations or channels always kept, such as `14` or `14.1,14.2`. |
+| `--drop LIST` | Stations or channels always left out, such as `22` or `42.9,42.10`. |
 | `--tuner-days DAYS` | Days to ask the tuner's guide for. Default 3; SiliconDust usually has about 2. |
 | `-S SECONDS` | Wait between requests. |
 | `-r TRIES` | Tries per request. Default 3. |
@@ -128,6 +134,21 @@ Channels come from your tuner's lineup, and each one is written with its channel
 4. Fills any gaps in Gracenote's listings from the tuner's guide.
 
 Channels that Gracenote lists but your tuner doesn't receive are left out.
+
+## Leaving out weak stations
+
+A channel scan keeps every station the tuner caught at that moment, including distant low-power
+stations that only come in on a good night. With `--signal`, OneGuide tunes one channel of each
+station on every run for a few seconds and reads the tuner's signal strength and quality. A station
+counts as good when it locks, its picture is clean, and its quality is at least `--min-quality`.
+
+The last 14 results for each station are kept in the cache folder (`signal.json`), and a station is
+left out when it was good in fewer than `--min-good` percent of them, so one bad night doesn't remove
+it. If every tuner is busy, the station keeps its earlier results. The output lists each station's
+readings, which helps in choosing `--min-quality`; 60 is a good start for leaving out fringe stations.
+
+ATSC 3.0 stations are kept without testing, since their signals tend to come and go. Encrypted (DRM)
+channels can't be tuned by OneGuide, so they're kept too. Use `--drop` to leave either out.
 
 ## Build from source
 

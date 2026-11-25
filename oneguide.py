@@ -23,7 +23,7 @@ import zlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
-VERSION = "1.0"
+VERSION = "1.1"
 GRACENOTE = "https://tvlistings.gracenote.com/"
 # tmsimg.com, the host zap2xml uses, fails certificate checks (zap2xml turns
 # them off). Kodi checks them, so it can't show those images. zpmc serves the
@@ -165,7 +165,9 @@ def read_tuner(net, base, days):
         num = item.get("GuideNumber")
         if num:
             channels[num] = {"number": num, "name": item.get("GuideName", ""),
-                             "icon": None, "station": None, "events": []}
+                             "icon": None, "station": None, "events": [],
+                             "url": item.get("URL"), "drm": bool(item.get("DRM")),
+                             "atsc3": item.get("AudioCodec") == "AC4" or item.get("VideoCodec") == "HEVC"}
 
     log(f"Tuner {disc.get('ModelNumber', '')} at {base}: {len(channels)} channels")
     if not auth:
@@ -213,6 +215,105 @@ def tuner_event(g):
         if g["OriginalAirdate"] + 48 * 3600 > g["StartTime"]:
             e["new"] = True
     return e
+
+
+# ---------------------------------------------------------------- signal
+
+SIGNAL_FILE = "signal.json"
+SIGNAL_HISTORY = 14      # probes remembered per station
+SIGNAL_MIN_SYMBOLS = 90  # symbol quality below this means a broken-up picture
+
+
+def major(num):
+    return num.split(".")[0].split("-")[0]
+
+
+def probe(base, c):
+    """Tune one channel for a few seconds and read the tuner's status.
+    None means it couldn't be tested (every tuner busy, or DRM)."""
+    url = c["url"] + ("&" if "?" in c["url"] else "?") + "duration=10"
+    got, status, t0 = 0, {}, time.time()
+    try:
+        r = urllib.request.urlopen(url, timeout=6)
+    except urllib.error.HTTPError as e:
+        if e.code == 503:
+            return None
+        return {"lock": False}
+    except OSError:
+        return {"lock": False}
+    try:
+        with r:
+            while time.time() - t0 < 3:
+                b = r.read(65536)
+                if not b:
+                    break
+                got += len(b)
+            if got:
+                with urllib.request.urlopen(base + "/status.json", timeout=5) as s:
+                    for t in json.load(s):
+                        if t.get("VctNumber") == c["number"]:
+                            status = t
+    except (OSError, ValueError):
+        pass
+    if not got:
+        return {"lock": False}
+    return {"lock": True, "strength": status.get("SignalStrengthPercent", 0),
+            "quality": status.get("SignalQualityPercent", 0),
+            "symbols": status.get("SymbolQualityPercent", 0)}
+
+
+def check_signal(base, channels, cache, min_quality, min_good, test_atsc3):
+    """Tune each station once, remember the results, and return the channel
+    numbers to leave out: stations that came in well in fewer than min_good
+    percent of the remembered probes. ATSC 3.0 stations are kept untested
+    unless test_atsc3 is set."""
+    path = os.path.join(cache, SIGNAL_FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            history = json.load(f)
+    except (OSError, ValueError):
+        history = {}
+
+    stations = {}
+    for c in sorted(channels.values(), key=lambda c: number_key(c["number"])):
+        stations.setdefault(major(c["number"]), []).append(c)
+
+    def good(p):
+        return (p.get("lock") and p.get("symbols", 0) >= SIGNAL_MIN_SYMBOLS
+                and p.get("quality", 0) >= min_quality)
+
+    log(f"Signal check: {len(stations)} stations")
+    drop = set()
+    now = int(time.time())
+    for m, cs in stations.items():
+        if all(c["atsc3"] for c in cs) and not test_atsc3:
+            log(f"  {m:>4} {cs[0]['name']:<10} ATSC 3.0, kept without testing")
+            continue
+        test = next((c for c in cs if not c["drm"] and c["url"]), None)
+        if not test:
+            log(f"  {m:>4} {cs[0]['name']:<10} can't be tested (DRM), kept")
+            continue
+        p = probe(base, test)
+        if p is None:
+            note = "no free tuner, "
+        else:
+            p["time"] = now
+            history[m] = (history.get(m, []) + [p])[-SIGNAL_HISTORY:]
+            note = (f"strength {p['strength']:>3} quality {p['quality']:>3} symbols {p['symbols']:>3}, "
+                    if p["lock"] else "no signal, ")
+        past = history.get(m, [])
+        n_good = sum(1 for q in past if good(q))
+        keep = not past or n_good * 100 >= min_good * len(past)
+        if not keep:
+            drop.update(c["number"] for c in cs)
+        log(f"  {m:>4} {test['name']:<10} {note}good {n_good}/{len(past)}, "
+            + ("kept" if keep else f"left out ({len(cs)} channels)"))
+
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=1)
+    os.replace(tmp, path)
+    return drop
 
 
 # ---------------------------------------------------------------- gracenote
@@ -649,6 +750,19 @@ def main():
                     help="channels that always use the tuner's guide, such as 35.3,44.3")
     ap.add_argument("--use-gracenote", default="", metavar="LIST",
                     help="channels that use Gracenote even when its listings disagree with the tuner's")
+    ap.add_argument("--signal", action="store_true",
+                    help="tune each station on every run and leave out the ones that don't come in well; "
+                         "results are remembered, so a station is judged on its last 14 runs")
+    ap.add_argument("--min-quality", type=int, default=0, metavar="PCT",
+                    help="with --signal, the tuner's signal quality a station needs to count as good (default 0)")
+    ap.add_argument("--min-good", type=int, default=50, metavar="PCT",
+                    help="with --signal, the share of remembered runs a station must be good in (default 50)")
+    ap.add_argument("--signal-atsc3", action="store_true",
+                    help="with --signal, test ATSC 3.0 stations too (by default they're always kept)")
+    ap.add_argument("--keep", default="", metavar="LIST",
+                    help="channels or stations always kept, such as 14 or 14.1,14.2")
+    ap.add_argument("--drop", default="", metavar="LIST",
+                    help="channels or stations always left out, such as 22 or 42.9,42.10")
     ap.add_argument("-S", "--sleep", type=float, default=0, help="seconds to wait between requests")
     ap.add_argument("-r", "--retries", type=int, default=3, help="tries per request (default 3)")
     ap.add_argument("-q", "--quiet", action="store_true", help="no progress output")
@@ -661,7 +775,23 @@ def main():
     os.makedirs(args.cache, exist_ok=True)
     net = Http(max(1, min(args.retries, 20)), args.sleep)
 
-    channels = read_tuner(net, discover_tuner(net, args.tuner), args.tuner_days)
+    def channel_list(text):
+        return {n.strip() for n in text.split(",") if n.strip()}
+
+    def listed(num, names):
+        return num in names or major(num) in names
+
+    base = discover_tuner(net, args.tuner)
+    channels = read_tuner(net, base, args.tuner_days)
+    drop = {n for n in channels if listed(n, channel_list(args.drop))}
+    if args.signal:
+        drop |= check_signal(base, channels, args.cache, args.min_quality, args.min_good,
+                             args.signal_atsc3)
+    drop = {n for n in drop if not listed(n, channel_list(args.keep))}
+    for n in drop:
+        del channels[n]
+    if drop:
+        log(f"Left out {len(drop)} channels, {len(channels)} remain")
 
     stations = {}
     if not args.no_gracenote:
@@ -683,9 +813,6 @@ def main():
                         add_details(e, d)
                 if i % 100 == 0:
                     log(f"  {i}/{len(needed)}")
-
-    def channel_list(text):
-        return {n.strip() for n in text.split(",") if n.strip()}
 
     stats = merge(channels, stations, channel_list(args.use_tuner), channel_list(args.use_gracenote))
     log(f"Channels: {stats['gracenote']} from Gracenote, {stats['both']} from Gracenote "
